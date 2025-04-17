@@ -1,8 +1,11 @@
 .{
-    .name = "builz",
-    .version = "0.1.0",
+    .name = .builz,
+    .fingerprint = 0x47afcfb8013e2c70,
     .paths = .{
         "./build.zig",
         "./build.zig.zon",
     },
+
+    .version = "0.1.0",
+    .minimum_zig_version = "0.14.0",
 }

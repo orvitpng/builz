@@ -19,7 +19,7 @@ pub fn format(
 
             if (print and count != 0)
                 print_out("{s}: {d}\n", .{ fmt.exe, count });
-        } else std.debug.print("error: `{s}` is not in PATH\n", .{fmt.exe});
+        } else print_err("error: `{s}` is not in PATH\n", .{fmt.exe});
     }
 
     return total;
@@ -30,6 +30,7 @@ pub const Formatter = struct {
     args: []const []const u8,
 };
 
+// The returned path is an allocated string that needs to be freed.
 fn find_exe(
     alloc: std.mem.Allocator,
     path: []const u8,
@@ -46,7 +47,7 @@ fn find_exe(
             continue;
 
         const full = try std.fs.path.join(alloc, &.{ dir, exe });
-        std.posix.access(full, 1) catch {
+        std.posix.access(full, std.posix.X_OK) catch {
             alloc.free(full);
             continue;
         };
@@ -63,39 +64,49 @@ fn exe_and_count(
 ) !usize {
     const argv = try alloc.alloc([]const u8, args.len + 1);
     defer alloc.free(argv);
-
     argv[0] = exe;
-    @memcpy(argv[1..], args);
+    std.mem.copyForwards([]const u8, argv[1..], args);
 
     var child = std.process.Child.init(argv, alloc);
     child.stdout_behavior = .Pipe;
     try child.spawn();
 
-    const bytes = try child.stdout.?.reader().readAllAlloc(alloc, 1024);
-    defer alloc.free(bytes);
+    const reader = child.stdout.?.reader();
+    var buf: [1024]u8 = undefined;
+    var count: usize = 0;
+
+    while (true) {
+        const n = reader.read(&buf) catch |err| {
+            // Ignore because if we propagate, it'll obscure the real error.
+            _ = child.kill() catch {};
+            return err;
+        };
+        if (n == 0) break;
+
+        for (buf[0..n]) |char| {
+            if (char == '\n') count += 1;
+        }
+    }
 
     const term = try child.wait();
     switch (term) {
         .Exited => |code| if (code != 0) {
-            std.debug.print("{s} exited with error {d}\n", .{ exe, code });
+            print_err("{s} exited with error {d}\n", .{ exe, code });
             return error.CommandErrored;
         },
         else => {
-            std.debug.print("{s} terminated unexpectedly\n", .{exe});
+            print_err("{s} terminated unexpectedly\n", .{exe});
             return error.CommandFailed;
         },
-    }
-
-    var count: usize = 0;
-    for (bytes) |char| {
-        if (char == '\n') count += 1;
     }
 
     return count;
 }
 
+// Basically is std.debug.print but using stdout.
 fn print_out(comptime fmt: []const u8, args: anytype) void {
     std.io.getStdOut().writer().print(fmt, args) catch {};
 }
+const print_err = std.debug.print;
 
 pub fn build(_: *std.Build) void {}
